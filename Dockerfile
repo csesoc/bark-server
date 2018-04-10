@@ -17,4 +17,4 @@ COPY . .
 ENV ENV=production
 EXPOSE 8080
 
-CMD ["gunicorn", "-c", "gunicorn.py", "app:app"]
+CMD ["gunicorn", "-c", "gunicorn.py", "wsgi:app"]
