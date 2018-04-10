@@ -1,0 +1,28 @@
+{% extends 'admin/master.html' %}
+
+{% block body %}
+{{ super() }}
+
+<div class="row-fluid">
+    <div>
+        <h1>Reports</h1>
+        <hr>
+
+        <form method="POST" action="csv">
+            <select name="event">
+                {% for event in events %}
+                <option value="{{ event.id }}">
+                    {{ event.name }}
+                </option>
+                {% endfor %}
+            </select>
+
+            <br>
+            <input type="submit" class="btn btn-primary" value="Generate CSV">
+        </form>
+
+        <hr>
+    </div>
+</div>
+
+{% endblock %}
