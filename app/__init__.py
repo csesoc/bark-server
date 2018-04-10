@@ -1,7 +1,3 @@
-#!/home/csesoc/bark-server/bark-env/bin/python
-
-# bark bark bark bark bark
-
 from flask import Flask, url_for, redirect, request, Response
 from flask_admin import Admin, BaseView, expose, helpers, AdminIndexView
 from flask_admin.model import typefmt
@@ -10,7 +6,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_login import current_user, login_user, LoginManager, logout_user
 from wtforms import form, fields, validators
 from wtforms.widgets import HTMLString
-from datetime import datetime, timedelta
+from datetime import datetime
 import time
 import os
 import StringIO
@@ -20,31 +16,35 @@ import csv
 import base64
 import qrcode
 import requests
-import ldap_auth
-import udb
+from app.services.udb_service import create_udb_service
+from app.services.ldap_service import create_ldap_service
+from config import get_config
 
+config = get_config()
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///data/bark.db'
-app.config['SECRET_KEY'] = os.environ['SECRET_KEY']
+app.config.from_object(config)
 db = SQLAlchemy(app)
 
-ANDROID_URL = 'about:blank'
-EVENT_LEEWAY = timedelta(0, 3600) # 1 hour leeway
+udb_service = create_udb_service(config)
+ldap_service = create_ldap_service(config)
+
 
 # --- Methods to do stuff
-
 def utc_to_local(d):
     now = time.time()
     offset = datetime.fromtimestamp(now) - datetime.utcfromtimestamp(now)
     return d + offset
+
 
 def generate_token():
     b = os.urandom(32)
     s = b.encode('hex')
     return s
 
+
 def validate_zid(zid):
     return re.match(r'^z[0-9]{7}$', zid) is not None
+
 
 # --- Web fetching stuff. Maybe move into a different module one day.
 
@@ -61,6 +61,7 @@ def degree_name(code):
         if match:
             return match.group(1).strip()
 
+
 def course_name(code):
     for u in ('undergraduate', 'postgraduate'):
         url = 'http://www.handbook.unsw.edu.au/%s/courses/current/%s.html' % (u, code)
@@ -70,6 +71,7 @@ def course_name(code):
         match = re.search(r'<meta name="DC\.Subject\.Description\.Short" CONTENT="(.*?)">', content)
         if match:
             return match.group(1).strip()
+
 
 # --- Database stuff
 
@@ -97,6 +99,7 @@ class User(db.Model):
     def __unicode__(self):
         return self.zid
 
+
 class Event(db.Model):
     """
     Defines an event.
@@ -115,13 +118,14 @@ class Event(db.Model):
 
     timestamp = db.Column(db.DateTime)
 
-    token = db.Column(db.String(64)) # hex-encoded session token
+    token = db.Column(db.String(64))  # hex-encoded session token
 
     def __init__(self):
         self.timestamp = datetime.now()
 
     def __unicode__(self):
         return self.name
+
 
 class Category(db.Model):
     """
@@ -133,6 +137,7 @@ class Category(db.Model):
     def __unicode__(self):
         return self.name
 
+
 class Student(db.Model):
     """
     Defines a student.
@@ -141,13 +146,14 @@ class Student(db.Model):
     zid = db.Column(db.String(20))
     given_names = db.Column(db.String(100))
     surname = db.Column(db.String(100))
-    is_arc = db.Column(db.Boolean) # update this infrequently, maybe every year
-                                   # or so. probably a good idea to purge the
-                                   # database at the start of each year.
+    is_arc = db.Column(db.Boolean)  # update this infrequently, maybe every year
+    # or so. probably a good idea to purge the
+    # database at the start of each year.
     override_cse = db.Column(db.Boolean)
 
     def __unicode__(self):
         return '%s, %s (%s)' % (self.surname, self.given_names, self.zid)
+
 
 class Degree(db.Model):
     """
@@ -161,6 +167,7 @@ class Degree(db.Model):
     def __unicode__(self):
         return self.name if self.name else 'Unknown Degree (%s)' % self.code
 
+
 class Course(db.Model):
     """
     Defines a UNSW course.
@@ -171,6 +178,7 @@ class Course(db.Model):
 
     def __unicode__(self):
         return self.code
+
 
 class Enrolment(db.Model):
     """
@@ -183,6 +191,7 @@ class Enrolment(db.Model):
 
     course_id = db.Column(db.Integer, db.ForeignKey('course.id'))
     course = db.relationship('Course', backref=db.backref('enrolments', lazy='dynamic'))
+
 
 class CheckIn(db.Model):
     """
@@ -214,6 +223,7 @@ class CheckIn(db.Model):
     def __unicode__(self):
         return '%s @ %s' % (unicode(self.student), unicode(self.event))
 
+
 #
 # --- Views
 
@@ -227,7 +237,7 @@ class LoginForm(form.Form):
         if user is None:
             raise validators.ValidationError('Invalid zID/password')
 
-        user_data = ldap_auth.authenticate(self.zid.data, self.password.data)
+        user_data = ldap_service.authenticate(self.zid.data, self.password.data)
         if not user_data:
             raise validators.ValidationError('Invalid zID/password')
 
@@ -239,6 +249,7 @@ class LoginForm(form.Form):
     def get_user(self):
         return db.session.query(User).filter_by(zid=self.zid.data).first()
 
+
 def init_login():
     login_manager = LoginManager()
     login_manager.init_app(app)
@@ -246,6 +257,7 @@ def init_login():
     @login_manager.user_loader
     def load_user(zid):
         return db.session.query(User).get(zid)
+
 
 class AdminIndexView(AdminIndexView):
     @expose('/')
@@ -270,6 +282,7 @@ class AdminIndexView(AdminIndexView):
     def logout_view(self):
         logout_user()
         return redirect(url_for('.index'))
+
 
 class ReportsView(BaseView):
     def is_accessible(self):
@@ -310,10 +323,12 @@ class ReportsView(BaseView):
         else:
             return 'u wot m8'
 
+
 DEFAULT_FORMATTERS = dict(typefmt.BASE_FORMATTERS)
 DEFAULT_FORMATTERS.update({
     datetime: lambda v, d: d.strftime('%I:%M%p %d/%m/%Y'),
 })
+
 
 class UsersView(ModelView):
     column_labels = {
@@ -325,6 +340,7 @@ class UsersView(ModelView):
 
     def __init__(self, session, **kwargs):
         super(UsersView, self).__init__(User, session, **kwargs)
+
 
 class QRCodeWidget(object):
     def __call__(self, field, **kwargs):
@@ -347,10 +363,11 @@ class QRCodeWidget(object):
 
         return HTMLString('<i>(Will be displayed after event is created)</i>')
 
+
 class QRCodeField(fields.Field):
     widget = QRCodeWidget()
 
-    #def __init__(self):
+    # def __init__(self):
     #    self.data = ''
 
     def process_formdata(self, valuelist):
@@ -359,6 +376,7 @@ class QRCodeField(fields.Field):
 
     def _value(self):
         return self.data
+
 
 class EventsView(ModelView):
     def is_accessible(self):
@@ -375,7 +393,7 @@ class EventsView(ModelView):
         'check_cse',
         'check_arc',
         'timestamp',
-        #'token',
+        # 'token',
     ]
 
     column_labels = {
@@ -406,12 +424,14 @@ class EventsView(ModelView):
     def __init__(self, session, **kwargs):
         super(EventsView, self).__init__(Event, session, **kwargs)
 
+
 class CategoriesView(ModelView):
     def is_accessible(self):
         return current_user.is_authenticated()
 
     def __init__(self, session, **kwargs):
         super(CategoriesView, self).__init__(Category, session, **kwargs)
+
 
 class StudentsView(ModelView):
     column_labels = {
@@ -442,6 +462,7 @@ class StudentsView(ModelView):
     def __init__(self, session, **kwargs):
         super(StudentsView, self).__init__(Student, session, **kwargs)
 
+
 class DegreesView(ModelView):
     column_labels = {
         'is_cse': 'Is CSE?'
@@ -465,6 +486,7 @@ class DegreesView(ModelView):
     def __init__(self, session, **kwargs):
         super(DegreesView, self).__init__(Degree, session, **kwargs)
 
+
 class CoursesView(ModelView):
     column_list = [
         'code',
@@ -481,6 +503,7 @@ class CoursesView(ModelView):
 
     def __init__(self, session, **kwargs):
         super(CoursesView, self).__init__(Course, session, **kwargs)
+
 
 class EnrolmentsView(ModelView):
     column_list = [
@@ -501,6 +524,7 @@ class EnrolmentsView(ModelView):
 
     def __init__(self, session, **kwargs):
         super(EnrolmentsView, self).__init__(Enrolment, session, **kwargs)
+
 
 class CheckInsView(ModelView):
     column_list = [
@@ -539,12 +563,13 @@ class CheckInsView(ModelView):
     def __init__(self, session, **kwargs):
         super(CheckInsView, self).__init__(CheckIn, session, **kwargs)
 
+
 init_login()
 
 admin = Admin(app, name='Bark', index_view=AdminIndexView(), base_template='master.html')
 admin.add_view(ReportsView(name='Reports'))
-#admin.add_view(MyView(name='Hello'))
-#admin.add_view(ModelView(User, db.session))
+# admin.add_view(MyView(name='Hello'))
+# admin.add_view(ModelView(User, db.session))
 admin.add_view(EventsView(db.session, name='Events'))
 admin.add_view(StudentsView(db.session, name='Students'))
 admin.add_view(DegreesView(db.session, name='Degrees'))
@@ -554,17 +579,21 @@ admin.add_view(CheckInsView(db.session, name='Check-ins'))
 admin.add_view(UsersView(db.session, name='Users'))
 admin.add_view(CategoriesView(db.session, name='Categories'))
 
+
 @app.route('/')
 def root():
     return redirect('/admin/')
 
+
 @app.route('/download')
 def download():
-    return redirect(ANDROID_URL)
+    return redirect(config.ANDROID_URL)
+
 
 # -- API stuff
 class BarkError(Exception):
     pass
+
 
 @app.route('/api', methods=['POST'])
 def api():
@@ -596,7 +625,7 @@ def api():
 
         # check if event is currently running
         now = datetime.now()
-        running = (event.start - EVENT_LEEWAY <= now and now <= event.end + EVENT_LEEWAY)
+        running = (event.start - config.EVENT_LEEWAY <= now and now <= event.end + config.EVENT_LEEWAY)
 
         # check action
         if 'action' not in data:
@@ -617,7 +646,7 @@ def api():
             if type(max_scans) is not int or max_scans < 1:
                 raise BarkError('Max scans is not valid')
 
-            user_info = udb.get_user(zid)
+            user_info = udb_service.get_user(zid)
 
             if user_info:
                 results = Student.query.filter(Student.zid == zid).all()
@@ -631,11 +660,11 @@ def api():
                     student.given_names = user_info['given_names']
                     student.surname = user_info['surname']
             else:
-                    # student doesn't exist in UDB
-                    student = Student()
-                    student.zid = zid
-                    student.given_names = 'Unknown'
-                    student.surname = 'Student'
+                # student doesn't exist in UDB
+                student = Student()
+                student.zid = zid
+                student.given_names = 'Unknown'
+                student.surname = 'Student'
 
             # look up check-in
             check_in = CheckIn.query.filter(CheckIn.student == student).filter(CheckIn.event == event).first()
@@ -666,7 +695,7 @@ def api():
 
                 courses_info = user_info['courses'] if user_info else []
 
-                expiry = datetime.fromtimestamp(0).date() # max(expiry of all degrees & courses)
+                expiry = datetime.fromtimestamp(0).date()  # max(expiry of all degrees & courses)
 
                 # handle degree
                 results = Degree.query.filter(Degree.code == degree_info['code']).all()
@@ -678,7 +707,7 @@ def api():
                     degree = Degree()
                     degree.code = degree_info['code']
                     degree.name = degree_name(degree_info['code'])
-                    degree.is_cse = True # TODO: wat
+                    degree.is_cse = True  # TODO: wat
 
                 expiry = max(expiry, degree_info['expiry'])
 
@@ -766,12 +795,9 @@ def api():
     except BarkError as e:
         success = False
         error = e.message
-    except udb.UDBError as e:
+    except IOError as e:
         success = False
         error = e.message
-    """except Exception as e:
-        success = False
-        error = 'Unknown error'"""
 
     if not success:
         resp = {}
@@ -780,6 +806,3 @@ def api():
     resp['success'] = success
 
     return json.dumps(resp)
-
-if __name__ == '__main__':
-    app.run(port=7000, debug=True)

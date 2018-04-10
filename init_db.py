@@ -1,4 +1,4 @@
-from bark_server import db, User, Degree
+from app import db, User, Degree
 db.create_all()
 
 username = raw_input('Initial user to add (zID): ')
