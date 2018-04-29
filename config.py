@@ -16,6 +16,8 @@ class Config(object):
 
 
 class Production(Config):
+    PROPAGATE_EXCEPTIONS = True
+
     def __init__(self):
         self.SECRET_KEY = os.environ['SECRET_KEY']
         self.UDB_PASSWORD = os.environ['UDB_PASSWORD']
@@ -29,11 +31,3 @@ class Development(Config):
     def __init__(self):
         super(Development, self).__init__()
         self.UDB_PASSWORD = os.environ.get('UDB_PASSWORD')
-
-
-def get_config():
-    env = os.environ.get('ENV', 'development').lower()
-    if env == 'production':
-        return Production()
-    else:
-        return Development()
